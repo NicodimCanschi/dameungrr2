@@ -1,0 +1,105 @@
+import kotlinx.coroutines.*
+import java.io.File
+
+// 1) Obiectul Cameră
+data class Camera(val nr: Int, val tip: String, var libera: Boolean = true) : Comparable<Camera> {
+    override fun compareTo(other: Camera) = nr - other.nr
+}
+
+// 2) ADT pentru depozitarea camerelor
+interface DepozitCamere {
+    fun adauga(cam: Camera)
+    fun gasesteLibera(tip: String): Camera?
+    fun toate(): List<Camera>
+}
+
+class ListaCamere : DepozitCamere {
+    private val camere = mutableListOf<Camera>()
+    override fun adauga(cam: Camera) = camere.add(cam)
+    override fun gasesteLibera(tip: String) =
+        camere.find { it.tip.equals(tip, ignoreCase = true) && it.libera }
+    override fun toate() = camere.toList()
+}
+
+// 3) Cererea de rezervare
+data class Cerere(val tip: String, val nume: String)
+
+// 4) Clasa Hotel cu rezervări, listă de aşteptare şi salvare
+class Hotel(private val depozit: DepozitCamere) {
+    private val rezervari = mutableMapOf<Camera, String>()
+    val listaAsteptare = mutableListOf<Cerere>()
+
+    // rezervare în corutină
+    suspend fun rezerva(c: Cerere): Boolean = withContext(Dispatchers.Default) {
+        val cam = depozit.gasesteLibera(c.tip)
+        if (cam != null) {
+            cam.libera = false
+            rezervari[cam] = c.nume
+            println("✔ Cameră ${cam.nr} (${cam.tip}) rezervată pentru ${c.nume}")
+            true
+        } else {
+            listaAsteptare += c
+            println("⚠️ Nicio cameră ${c.tip} liberă. ${c.nume} adăugat în listă.")
+            false
+        }
+    }
+
+    // afișează starea camerelor
+    fun afiseazaCamere() {
+        println("\nCamere:")
+        depozit.toate().sorted().forEach {
+            val stat = if (it.libera) "liberă" else "ocupată de ${rezervari[it]}"
+            println("• ${it.nr} ${it.tip}: $stat")
+        }
+    }
+
+    // salvează starea în fișier
+    fun salveaza(numeFisier: String) {
+        File(numeFisier).printWriter().use { f ->
+            depozit.toate().sorted().forEach {
+                val stat = if (it.libera) "liberă" else "ocupată de ${rezervari[it]}"
+                f.println("${it.nr} ${it.tip}: $stat")
+            }
+            f.println("\nListă de aşteptare:")
+            listaAsteptare.forEach { f.println("${it.nume} – ${it.tip}") }
+        }
+        println("📄 Stare salvată în '$numeFisier'")
+    }
+}
+
+// 5) Extensie pentru procesarea listei de aşteptare
+fun Hotel.processeazaLista() {
+    val it = listaAsteptare.iterator()
+    while (it.hasNext()) runBlocking {
+        val c = it.next()
+        if (rezerva(c)) it.remove()
+    }
+}
+
+// 6) CLI
+fun main() = runBlocking {
+    val hotel = Hotel(ListaCamere().apply {
+        adauga(Camera(101, "Single"))
+        adauga(Camera(102, "Double"))
+        adauga(Camera(201, "Suite"))
+    })
+
+    while (true) {
+        println("\n1) Arată camere   2) Rezervă   3) Afișează lista   4) Procesează   5) Salvează & Ieși")
+        when (readLine()?.trim()) {
+            "1" -> hotel.afiseazaCamere()
+            "2" -> {
+                print("Nume oaspete: "); val nume = readLine().orEmpty()
+                print("Tip cameră: ");    val tip  = readLine().orEmpty()
+                hotel.rezerva(Cerere(tip, nume))
+            }
+            "3" -> {
+                println("\nListă de aşteptare:")
+                hotel.listaAsteptare.forEach { println("• ${it.nume} – ${it.tip}") }
+            }
+            "4" -> hotel.processeazaLista()
+            "5" -> { hotel.salveaza("stare_hotel.txt"); break }
+            else -> println("Opțiune invalidă")
+        }
+    }
+}
