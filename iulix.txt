@@ -1,0 +1,91 @@
+import kotlinx.coroutines.*
+import java.io.File
+
+data class Room(val num: Int, val type: String, var free: Boolean = true) : Comparable<Room> {
+    override fun compareTo(o: Room) = num - o.num
+}
+
+interface RoomADT {
+    fun add(r: Room)
+    fun findFree(type: String): Room?
+    fun all(): List<Room>
+}
+
+class RoomListADT : RoomADT {
+    private val rooms = mutableListOf<Room>()
+    override fun add(r: Room) = rooms.add(r)
+    override fun findFree(type: String) = rooms.find { it.free && it.type.equals(type, true) }
+    override fun all() = rooms.toList()
+}
+
+data class BookingRequest(val type: String, val name: String)
+
+class Hotel(private val rooms: RoomADT) {
+    private val bookings = mutableMapOf<Room, String>()
+    val waitList = mutableListOf<BookingRequest>()
+
+    //  Rezervare în corutină
+    suspend fun reserve(req: BookingRequest) = withContext(Dispatchers.Default) {
+        rooms.findFree(req.type)?.apply {
+            free = false
+            bookings[this] = req.name
+            println("✔ Rezervată camera $num pentru ${req.name}")
+        } != null.also {
+            if (!it) {
+                waitList += req
+                println("⚠️ ${req.name} pe lista de așteptare")
+            }
+        }
+    }
+
+    fun show() {
+        println("\nCamere:")
+        rooms.all().sorted().forEach {
+            println("${it.num} ${it.type} – ${if (it.free) "liberă" else "ocupată de ${bookings[it]}"}")
+        }
+    }
+
+    fun save(file: String) {
+        File(file).printWriter().use { w ->
+            rooms.all().sorted().forEach {
+                w.println("${it.num} ${it.type}: ${if (it.free) "liberă" else "ocupată de ${bookings[it]}"}")
+            }
+            w.println("\nLista de așteptare:")
+            waitList.forEach { w.println("${it.name} – ${it.type}") }
+        }
+        println("📄 Salvat în '$file'")
+    }
+}
+
+// Extensie pentru procesarea listei de așteptare
+fun Hotel.processWaitingList() {
+    val it = waitList.iterator()
+    while (it.hasNext()) runBlocking {
+        val r = it.next()
+        if (reserve(r)) it.remove()
+    }
+}
+
+fun main() = runBlocking {
+    val hotel = Hotel(RoomListADT().apply {
+        add(Room(101, "Single"))
+        add(Room(102, "Double"))
+        add(Room(201, "Suite"))
+    })
+
+    while (true) {
+        println("\n1) Arată camere   2) Rezervă   3) Listă așteptare   4) Procesează   5) Salvează & Ieși")
+        when (readLine()?.trim()) {
+            "1" -> hotel.show()
+            "2" -> {
+                print("Nume: "); val n = readLine().orEmpty()
+                print("Tip cameră: "); val t = readLine().orEmpty()
+                hotel.reserve(BookingRequest(t, n))
+            }
+            "3" -> hotel.waitList.forEach { println("${it.name} – ${it.type}") }
+            "4" -> hotel.processWaitingList()
+            "5" -> { hotel.save("stare.txt"); break }
+            else -> println("Opțiune invalidă")
+        }
+    }
+}
